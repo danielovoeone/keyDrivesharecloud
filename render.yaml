@@ -1,0 +1,12 @@
+# Render 一键部署配置：在 render.com 选择 Blueprint，指向本仓库即可
+# 免费套餐没有持久磁盘：重新部署/重启后 data/ 里的文件会清空，重要资料请定期备份
+services:
+  - type: web
+    name: keydrive
+    runtime: node
+    plan: free
+    buildCommand: ""
+    startCommand: node server.js
+    envVars:
+      - key: MAX_FILE_MB
+        value: 100

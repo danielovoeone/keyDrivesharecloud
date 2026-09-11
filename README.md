@@ -38,25 +38,27 @@ PORT=8080 MAX_FILE_MB=1024 node server.js
 
 ## 如何让别人访问（远程使用）
 
+- **临时公网网址（最快）**：双击 `启动公网访问.command`（需先 `brew install cloudflared`），会得到一个 `https://xxxx.trycloudflare.com` 公网网址，直接发给朋友即可。注意：网址每次重新运行都会变化，且电脑关机/脚本关闭后即失效。
+- **固定公网网址**：部署到 Render 等平台（见下），得到形如 `keydrive.onrender.com` 的固定地址。
 - **同一 Wi-Fi / 局域网**：直接访问 `http://<你的IP>:3000`（服务启动时会打印提示）。
-- **公网**：把服务部署到云服务器，或在家庭宽带上做端口转发 / 使用 frp、Tailscale、Cloudflare Tunnel 等内网穿透工具。
+- **家庭宽带 + 自己的域名**：端口转发，或使用 Cloudflare 命名隧道、frp、Tailscale 等内网穿透工具。
 
 ### 部署方式
 
 GitHub 只托管代码（本项目是 Node 服务端，GitHub Pages 无法运行）。三种常见部署方式：
 
-**① Docker（任意服务器 / 群晖 / 软路由）**
+**① Render（免费，一键拉取本仓库）**
+
+1. 登录 [render.com](https://render.com) → New → Blueprint → 连接本 GitHub 仓库（自动读取 `render.yaml`）
+2. 部署完成后得到固定网址 `https://<服务名>.onrender.com`
+3. 免费套餐无持久磁盘：重新部署后 `data/` 会清空，重要资料请定期备份；需要持久化时在 Settings → Disks 挂载 `/app/data`（付费套餐）
+
+**② Docker（任意服务器 / 群晖 / 软路由）**
 
 ```bash
 docker build -t keydrive .
 docker run -d --name keydrive -p 3000:3000 -v keydrive-data:/app/data keydrive
 ```
-
-**② Render（免费，一键拉取本仓库）**
-
-1. 登录 [render.com](https://render.com) → New → Web Service → 连接本 GitHub 仓库
-2. Build Command 留空，Start Command 填 `node server.js`
-3. 创建后在 Settings → Disks 挂一块持久盘，挂载路径填 `/app/data`（否则重新部署后上传的文件会丢失）
 
 **③ Railway / 其它支持 Node 的平台**：直接用仓库根目录的 `npm start` 启动，记得给 `/app/data`（即项目内 `data/`）配持久化存储。
 
