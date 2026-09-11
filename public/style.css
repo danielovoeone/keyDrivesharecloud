@@ -148,16 +148,39 @@ body {
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 4px 8px 4px 12px;
-  font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: 13px;
   cursor: pointer;
+  max-width: 100%;
 }
 .key-chip-item:hover { border-color: var(--primary); color: var(--primary); }
-.key-chip-item .rm {
-  border: none; background: none; cursor: pointer; color: var(--muted);
-  font-size: 13px; padding: 0 2px; line-height: 1;
+.key-chip-item .chip-key {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 0.5px;
 }
+.key-chip-item .chip-note { font-weight: 600; }
+.key-chip-item .chip-note:empty { display: none; }
+.key-chip-item .chip-note:not(:empty)::after { content: "·"; margin-left: 6px; opacity: 0.5; }
+.key-chip-item .edit, .key-chip-item .rm {
+  border: none; background: none; cursor: pointer; color: var(--muted);
+  font-size: 12px; padding: 0 2px; line-height: 1;
+}
+.key-chip-item .edit:hover { opacity: 1; }
 .key-chip-item .rm:hover { color: var(--danger); }
+
+/* ---------- 通用文本输入 ---------- */
+.text-input {
+  width: 100%;
+  border: 1.5px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 16px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  outline: none;
+  margin-top: 14px;
+}
+.text-input:focus { border-color: var(--primary); }
 
 /* ---------- 创建成功页 ---------- */
 .key-display {

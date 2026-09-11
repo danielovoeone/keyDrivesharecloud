@@ -26,10 +26,11 @@ const MAX_JSON = 256 * 1024;
 const DATA_DIR = path.join(__dirname, 'data', 'vaults');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
-// 密钥字符表：去掉了 0/O、1/I/L 等易混淆字符
+// 密钥字符表：随机密钥去掉了 0/O、1/I/L 等易混淆字符；自定义密钥允许全部字母数字
 const KEY_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
 const KEY_LENGTH = 12;
-const KEY_RE = new RegExp(`^[${KEY_ALPHABET}]{${KEY_LENGTH}}$`);
+// 通用密钥格式：4-32 位字母数字（规范化后）
+const KEY_RE = /^[A-Z0-9]{4,32}$/;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -186,17 +187,26 @@ function streamToFile(req, dest, limit) {
 async function handleApi(req, res, pathname, url) {
   const parts = pathname.split('/').filter(Boolean); // ['api', ...]
 
-  // POST /api/create —— 创建新密钥
+  // POST /api/create —— 创建新密钥（body 可传 {key:"自定义密钥"}）
   if (req.method === 'POST' && pathname === '/api/create') {
-    for (let i = 0; i < 5; i++) {
-      const key = generateKey();
-      if (await vaultExists(key)) continue;
-      const dir = vaultDir(key);
-      await fsp.mkdir(path.join(dir, 'files'), { recursive: true });
-      await writeMeta(dir, { created: Date.now(), updatedAt: Date.now(), text: '', files: [] });
-      return sendJson(res, 200, { key });
+    const body = await readJsonBody(req, MAX_JSON);
+    let key;
+    if (body.key) {
+      key = normalizeKey(body.key);
+      if (!key) return sendJson(res, 400, { error: '自定义密钥需为 4-32 位字母或数字（可含连字符、下划线）' });
+      if (await vaultExists(key)) return sendJson(res, 409, { error: '该密钥已被占用，请换一个' });
+    } else {
+      for (let i = 0; i < 5; i++) {
+        key = generateKey();
+        if (!(await vaultExists(key))) break;
+        key = null;
+      }
+      if (!key) return sendJson(res, 500, { error: '创建失败，请重试' });
     }
-    return sendJson(res, 500, { error: '创建失败，请重试' });
+    const dir = vaultDir(key);
+    await fsp.mkdir(path.join(dir, 'files'), { recursive: true });
+    await writeMeta(dir, { created: Date.now(), updatedAt: Date.now(), text: '', files: [] });
+    return sendJson(res, 200, { key });
   }
 
   // 以下接口的路径形如 /api/<资源>/<密钥>[/<文件ID>]
@@ -205,7 +215,7 @@ async function handleApi(req, res, pathname, url) {
   const key = normalizeKey(parts[2]);
   if (!key) {
     req.resume(); // 把未读取的请求体排空，避免提前响应导致客户端连接被重置
-    return sendJson(res, 400, { error: '密钥格式不正确（应为 12 位字母数字，例如 K7M2-9QX4-BT8F）' });
+    return sendJson(res, 400, { error: '密钥格式不正确（应为 4-32 位字母数字，例如 K7M2-9QX4-BT8F）' });
   }
   const dir = vaultDir(key);
   const hash = keyHash(key);

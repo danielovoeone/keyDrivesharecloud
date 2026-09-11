@@ -3,7 +3,7 @@
 
 const $ = (sel) => document.querySelector(sel);
 
-const KEY_RE = /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{12}$/;
+const KEY_RE = /^[A-Z0-9]{4,32}$/;
 
 const state = {
   key: null,
@@ -18,7 +18,8 @@ function normalizeKey(raw) {
 }
 
 function formatKey(key) {
-  return key.replace(/(.{4})(?=.)/g, '$1-');
+  // 随机生成的 12 位密钥显示为 XXXX-XXXX-XXXX，自定义密钥原样显示
+  return /^[A-Z0-9]{12}$/.test(key) ? key.replace(/(.{4})(?=.)/g, '$1-') : key;
 }
 
 function esc(s) {
@@ -89,38 +90,66 @@ function showScreen(name) {
   window.scrollTo(0, 0);
 }
 
-/* ---------------- 最近使用的密钥 ---------------- */
+/* ---------------- 最近使用的密钥（可备注） ---------------- */
 
 const LS_KEY = 'keydrive_recent_keys';
 
 function getRecent() {
-  try { return JSON.parse(localStorage.getItem(LS_KEY)) || []; } catch { return []; }
+  let list;
+  try { list = JSON.parse(localStorage.getItem(LS_KEY)) || []; } catch { list = []; }
+  // 兼容旧版纯字符串数据 → 转为对象并去重规范化
+  const seen = new Set();
+  const out = [];
+  for (const item of list) {
+    const k = normalizeKey(typeof item === 'string' ? item : item.k);
+    if (!KEY_RE.test(k) || seen.has(k)) continue;
+    seen.add(k);
+    out.push({ k, n: (typeof item === 'object' && item.n) || '', t: (typeof item === 'object' && item.t) || 0 });
+  }
+  return out;
 }
 
-function addRecent(key) {
+function saveRecent(list) {
+  localStorage.setItem(LS_KEY, JSON.stringify(list.slice(0, 12)));
+}
+
+function addRecent(key, note) {
   key = normalizeKey(key); // 统一存规范格式，展示时再加分隔符，避免匹配/去重失效
-  const list = getRecent().filter((k) => k !== key);
-  list.unshift(key);
-  localStorage.setItem(LS_KEY, JSON.stringify(list.slice(0, 8)));
+  const all = getRecent();
+  const existing = all.find((item) => item.k === key);
+  const list = all.filter((item) => item.k !== key);
+  list.unshift({ k: key, n: note !== undefined ? note : (existing ? existing.n : ''), t: Date.now() });
+  saveRecent(list);
   renderRecent();
 }
 
 function removeRecent(key) {
-  localStorage.setItem(LS_KEY, JSON.stringify(getRecent().filter((k) => k !== key)));
+  saveRecent(getRecent().filter((item) => item.k !== key));
   renderRecent();
+}
+
+function editRecentNote(key) {
+  const item = getRecent().find((it) => it.k === key);
+  const note = prompt('给这个密钥写个备注（例如“小许的相册”），留空清除：', item ? item.n : '');
+  if (note === null) return; // 取消
+  addRecent(key, note.trim());
 }
 
 function renderRecent() {
   const box = $('#my-keys');
-  // 兼容历史遗留的带连字符数据：展示与传参前统一规范化
-  const list = [...new Set(getRecent().map(normalizeKey).filter((k) => KEY_RE.test(k)))];
+  const list = getRecent();
   if (!list.length) { box.innerHTML = ''; return; }
-  box.innerHTML = '<span class="label">最近使用：</span>' + list.map((k) =>
-    `<span class="key-chip-item" data-key="${esc(k)}" title="点击进入">${esc(formatKey(k))}<button class="rm" data-rm="${esc(k)}" title="从列表移除">✕</button></span>`
+  box.innerHTML = '<span class="label">最近使用：</span>' + list.map((item) =>
+    `<span class="key-chip-item${item.n ? ' has-note' : ''}" data-key="${esc(item.k)}" title="点击进入">
+      <span class="chip-note">${item.n ? esc(item.n) : ''}</span>
+      <span class="chip-key">${esc(formatKey(item.k))}</span>
+      <button class="edit" data-edit="${esc(item.k)}" title="编辑备注">✏️</button>
+      <button class="rm" data-rm="${esc(item.k)}" title="从列表移除">✕</button>
+    </span>`
   ).join('');
   box.querySelectorAll('.key-chip-item').forEach((el) => {
     el.addEventListener('click', (e) => {
-      if (e.target.dataset.rm) return;
+      if (e.target.dataset.rm || e.target.dataset.edit) return;
       enterVault(el.dataset.key);
     });
   });
@@ -130,18 +159,30 @@ function renderRecent() {
       removeRecent(el.dataset.rm);
     });
   });
+  box.querySelectorAll('.edit').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      editRecentNote(el.dataset.edit);
+    });
+  });
 }
 
 /* ---------------- 进入 / 创建 ---------------- */
 
 async function createKey() {
   const btn = $('#btn-create');
+  const useCustom = $('#input-custom').value.trim().length > 0;
   btn.disabled = true;
   try {
-    const data = await api('/api/create', { method: 'POST' });
+    const data = await api('/api/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(useCustom ? { key: $('#input-custom').value } : {}),
+    });
     $('#new-key').textContent = data.key;
     addRecent(data.key);
     showScreen('screen-created');
+    $('#input-custom').value = '';
   } catch (err) {
     toast(err.message, true);
   } finally {
@@ -363,12 +404,8 @@ $('#input-key').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') enterVault($('#input-key').value);
 });
 
-// 输入时自动大写、自动补全分隔线的视觉体验交给 CSS text-transform
-$('#input-key').addEventListener('input', () => {
-  const pos = $('#input-key').value.length;
-  if (pos === 12 && KEY_RE.test(normalizeKey($('#input-key').value))) {
-    enterVault($('#input-key').value);
-  }
+$('#input-custom').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') createKey();
 });
 
 $('#btn-copy-new').addEventListener('click', () => copyText($('#new-key').textContent, '密钥已复制，请妥善保存！'));
