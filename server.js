@@ -390,7 +390,7 @@ const server = http.createServer(async (req, res) => {
 fsp.mkdir(path.join(DATA_DIR), { recursive: true }).then(() => {
   server.listen(PORT, HOST, () => {
     console.log('');
-    console.log('  ✅ keyDrive ShareCloud 已启动');
+    console.log('  ✅ KeyDrive空间 已启动');
     console.log(`  本机访问:   http://localhost:${PORT}`);
     console.log(`  局域网访问: http://<你的IP>:${PORT}  （把 IP 告诉同一网络里的朋友）`);
     console.log(`  数据目录:   ${DATA_DIR}`);
