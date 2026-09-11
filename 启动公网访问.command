@@ -1,5 +1,5 @@
 #!/bin/bash
-# 双击运行：启动 KeyDrive 并开启公网访问
+# 双击运行：启动 KeyDriveShareCloud 并开启公网访问
 # 前提：已安装 cloudflared（终端里执行 brew install cloudflared）
 cd "$(dirname "$0")" || exit 1
 
