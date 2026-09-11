@@ -1,0 +1,13 @@
+{
+  "name": "keydrive",
+  "version": "1.0.0",
+  "description": "免登录的密钥共享空间：创建密钥即可上传文件/文字，他人凭密钥查看",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "license": "MIT"
+}

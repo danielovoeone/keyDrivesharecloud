@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#eaf3fb">
+<title>KeyDrive · 密钥共享空间</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90'%3E%E2%98%81%EF%B8%8F%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ============ 首页 ============ -->
+  <section id="screen-home" class="screen">
+    <header class="hero">
+      <div class="hero-logo">☁️</div>
+      <h1>KeyDrive 密钥共享空间</h1>
+    </header>
+
+    <div class="cards">
+      <div class="card">
+        <div class="card-icon">✨</div>
+        <h2>创建密钥</h2>
+        <p>生成一串新密钥，获得一个全新空间。</p>
+        <button id="btn-create" class="btn primary block">创建新密钥</button>
+      </div>
+
+      <div class="card">
+        <div class="card-icon">🔑</div>
+        <h2>输入密钥</h2>
+        <p>输入自己或他人的密钥，打开对应空间。</p>
+        <div class="key-input-row">
+          <input id="input-key" placeholder="例如：K7M2-9QX4-BT8F" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" maxlength="20">
+          <button id="btn-enter" class="btn primary">进入</button>
+        </div>
+        <div id="my-keys" class="my-keys"></div>
+      </div>
+    </div>
+
+    <p class="home-tip">密钥是唯一凭证，请妥善保存，丢失无法找回。</p>
+  </section>
+
+  <!-- ============ 创建成功 ============ -->
+  <section id="screen-created" class="screen hidden">
+    <div class="card narrow">
+      <div class="card-icon big">🎉</div>
+      <h2 class="center">你的密钥已创建</h2>
+      <p class="center muted">请立即复制保存，丢失无法找回：</p>
+      <div class="key-display" id="new-key">----</div>
+      <div class="btn-row">
+        <button id="btn-copy-new" class="btn ghost">📋 复制密钥</button>
+        <button id="btn-copy-link" class="btn ghost">🔗 复制访问链接</button>
+      </div>
+      <button id="btn-go-vault" class="btn primary block">进入我的空间 →</button>
+      <button id="btn-back-home" class="btn link block">返回首页</button>
+    </div>
+  </section>
+
+  <!-- ============ 共享空间 ============ -->
+  <section id="screen-vault" class="screen hidden">
+    <header class="vault-header">
+      <div class="vault-title-row">
+        <h2>📁 共享空间</h2>
+        <span class="key-chip" id="vault-key" title="点击复制密钥">----</span>
+        <button id="btn-copy-key" class="btn ghost small">📋 复制</button>
+        <span class="spacer"></span>
+        <button id="btn-exit" class="btn ghost small">退出空间</button>
+      </div>
+      <p class="vault-meta" id="vault-meta">加载中…</p>
+    </header>
+
+    <div class="card">
+      <h3>📝 文字资料</h3>
+      <textarea id="text-area" placeholder="在这里输入文字资料…"></textarea>
+      <div class="btn-row between">
+        <span id="text-status" class="muted small-text"></span>
+        <button id="btn-save-text" class="btn primary">保存文字资料</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>🗂️ 文件</h3>
+      <div id="dropzone" class="dropzone">
+        <div class="dz-icon">⬆️</div>
+        <p><strong>点击选择文件</strong>，或拖拽到这里</p>
+        <input id="file-input" type="file" multiple hidden>
+      </div>
+      <div id="upload-list"></div>
+      <ul id="file-list" class="file-list"></ul>
+      <p id="file-empty" class="muted center empty-hint">这个空间还没有文件，上传一个试试吧。</p>
+    </div>
+
+    <div class="danger-zone">
+      <span>不再需要这个空间？</span>
+      <button id="btn-del-vault" class="btn danger small">删除整个空间</button>
+    </div>
+  </section>
+
+</div>
+
+<div id="toast" class="toast"></div>
+<script src="/app.js"></script>
+</body>
+</html>
