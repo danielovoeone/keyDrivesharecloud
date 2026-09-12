@@ -205,7 +205,9 @@ async function handleApi(req, res, pathname, url) {
     }
     const dir = vaultDir(key);
     await fsp.mkdir(path.join(dir, 'files'), { recursive: true });
-    await writeMeta(dir, { created: Date.now(), updatedAt: Date.now(), text: '', files: [] });
+    const meta = { created: Date.now(), updatedAt: Date.now(), text: '', files: [] };
+    await writeMeta(dir, meta);
+    scheduleSync([{ abs: path.join(dir, 'meta.json'), data: Buffer.from(JSON.stringify(meta, null, 2)) }], `创建空间 ${key}`);
     return sendJson(res, 200, { key });
   }
 
@@ -244,12 +246,15 @@ async function handleApi(req, res, pathname, url) {
     if (Buffer.byteLength(text, 'utf8') > MAX_TEXT) {
       return sendJson(res, 413, { error: '文字资料过长（上限约 20 万字符）' });
     }
+    let metaAfter;
     await withLock(hash, async () => {
       const meta = await readMeta(dir);
       meta.text = text;
       meta.updatedAt = Date.now();
       await writeMeta(dir, meta);
+      metaAfter = meta;
     });
+    scheduleSync([{ abs: path.join(dir, 'meta.json'), data: Buffer.from(JSON.stringify(metaAfter, null, 2)) }], `保存文字 ${key}`);
     return sendJson(res, 200, { ok: true });
   }
 
@@ -267,13 +272,19 @@ async function handleApi(req, res, pathname, url) {
     await streamToFile(req, dest, MAX_FILE);
     const size = (await fsp.stat(dest)).size;
     const entry = { id, name, size, time: Date.now() };
+    let metaAfter;
     await withLock(hash, async () => {
       const meta = await readMeta(dir);
       meta.files = meta.files || [];
       meta.files.unshift(entry);
       meta.updatedAt = Date.now();
       await writeMeta(dir, meta);
+      metaAfter = meta;
     });
+    scheduleSync([
+      { abs: dest, readFromDisk: true },
+      { abs: path.join(dir, 'meta.json'), data: Buffer.from(JSON.stringify(metaAfter, null, 2)) },
+    ], `上传文件 ${key}/${name}`);
     return sendJson(res, 200, entry);
   }
 
@@ -313,6 +324,7 @@ async function handleApi(req, res, pathname, url) {
     if (!(await vaultExists(key))) return sendJson(res, 404, { error: '该密钥不存在' });
     const id = parts[3];
     if (!/^[a-f0-9]{16}$/.test(id)) return sendJson(res, 400, { error: '文件 ID 不合法' });
+    let metaAfter;
     await withLock(hash, async () => {
       const meta = await readMeta(dir);
       const before = (meta.files || []).length;
@@ -320,14 +332,25 @@ async function handleApi(req, res, pathname, url) {
       meta.updatedAt = Date.now();
       await writeMeta(dir, meta);
       if (meta.files.length !== before) await fsp.unlink(path.join(dir, 'files', id)).catch(() => {});
+      metaAfter = meta;
     });
+    scheduleSync([
+      { abs: path.join(dir, 'files', id), data: null },
+      { abs: path.join(dir, 'meta.json'), data: Buffer.from(JSON.stringify(metaAfter, null, 2)) },
+    ], `删除文件 ${key}/${id}`);
     return sendJson(res, 200, { ok: true });
   }
 
   // DELETE /api/vault/:key —— 删除整个空间
   if (req.method === 'DELETE' && parts[1] === 'vault' && parts.length === 3) {
     if (!(await vaultExists(key))) return sendJson(res, 404, { error: '该密钥不存在' });
+    let doomed = [path.join(dir, 'meta.json')];
+    try {
+      const meta = await readMeta(dir);
+      doomed = doomed.concat((meta.files || []).map((f) => path.join(dir, 'files', f.id)));
+    } catch { /* 元数据坏了也照样删 */ }
     await fsp.rm(dir, { recursive: true, force: true });
+    scheduleSync(doomed.map((abs) => ({ abs, data: null })), `删除空间 ${key}`);
     return sendJson(res, 200, { ok: true });
   }
 
@@ -357,7 +380,128 @@ function serveStatic(res, pathname) {
   });
 }
 
-/* ---------------- 服务器 ---------------- */
+/* ---------------- GitHub 数据持久化（可选） ----------------
+ * 配置环境变量后启用：
+ *   GH_DATA_TOKEN  —— GitHub 访问令牌
+ *   GH_DATA_REPO   —— 私有仓库，如 danielovoeone/keydrive-data
+ *   GH_DATA_BRANCH —— 数据分支名，默认 data
+ * 所有密钥空间的改动会以提交形式同步到该分支；容器重启/重新部署后自动恢复，
+ * 实现“永久保存”。未配置这些变量时（如本地开发）行为与原来完全一致。
+ */
+const GH_TOKEN = process.env.GH_DATA_TOKEN || '';
+const GH_REPO = process.env.GH_DATA_REPO || '';
+const GH_BRANCH = process.env.GH_DATA_BRANCH || 'data';
+const GH_API = 'https://api.github.com';
+const GH_SYNC_MAX = 90 * 1024 * 1024; // GitHub blob 上限 100MB，留出余量
+const ghEnabled = () => !!(GH_TOKEN && GH_REPO);
+
+let ghChain = Promise.resolve(); // 串行化提交，避免分支引用竞争
+
+function ghFetch(pathname, opts = {}) {
+  return fetch(GH_API + pathname, {
+    ...opts,
+    headers: {
+      Authorization: `Bearer ${GH_TOKEN}`,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'keydrive-data-sync',
+      ...(opts.headers || {}),
+    },
+    signal: AbortSignal.timeout(60000),
+  });
+}
+
+async function ghApi(pathname, opts = {}) {
+  const res = await ghFetch(pathname, opts);
+  if (!res.ok) {
+    const text = await res.text();
+    throw Object.assign(new Error(`GitHub API ${res.status}: ${text.slice(0, 200)}`), { ghStatus: res.status });
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+const repoRelPath = (absPath) => path.relative(__dirname, absPath).split(path.sep).join('/');
+
+// 把一组本地改动提交到 GitHub 数据分支（buf 为 null 表示删除）
+function scheduleSync(muts, label) {
+  if (!ghEnabled() || !muts.length) return;
+  ghChain = ghChain.then(async () => {
+    // 准备条目：需要从磁盘回读的先读出来
+    const entries = [];
+    for (const m of muts) {
+      const p = repoRelPath(m.abs);
+      if (m.data === null) {
+        entries.push({ path: p, sha: null });
+        continue;
+      }
+      let buf = m.data;
+      if (!buf && m.readFromDisk) buf = await fs.promises.readFile(m.abs);
+      if (buf.length > GH_SYNC_MAX) {
+        console.error(`GitHub 同步跳过（超过 90MB）: ${p}`);
+        continue;
+      }
+      const blob = await ghApi(`/repos/${GH_REPO}/git/blobs`, {
+        method: 'POST',
+        body: JSON.stringify({ content: buf.toString('base64'), encoding: 'base64' }),
+      });
+      entries.push({ path: p, mode: '100644', type: 'blob', sha: blob.sha });
+    }
+    if (!entries.length) return;
+
+    // 竞争重试：引用被别人推进时重取 HEAD 重建提交
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const ref = await ghApi(`/repos/${GH_REPO}/git/ref/heads/${GH_BRANCH}`);
+        const baseCommitSha = ref.object.sha;
+        const baseCommit = await ghApi(`/repos/${GH_REPO}/git/commits/${baseCommitSha}`);
+        const tree = await ghApi(`/repos/${GH_REPO}/git/trees`, {
+          method: 'POST',
+          body: JSON.stringify({ base_tree: baseCommit.tree.sha, tree: entries }),
+        });
+        const commit = await ghApi(`/repos/${GH_REPO}/git/commits`, {
+          method: 'POST',
+          body: JSON.stringify({ message: `KeyDrive 数据同步: ${label}`, tree: tree.sha, parents: [baseCommitSha] }),
+        });
+        await ghApi(`/repos/${GH_REPO}/git/refs/heads/${GH_BRANCH}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ sha: commit.sha, force: false }),
+        });
+        return;
+      } catch (err) {
+        if (attempt === 3) throw err;
+        if (err.ghStatus !== 422 && err.ghStatus !== 409) throw err;
+        await new Promise((r) => setTimeout(r, 500 * attempt));
+      }
+    }
+  }).catch((err) => console.error(`GitHub 同步失败（${label}）:`, err.message));
+}
+
+// 启动时：本地没有任何数据 → 从 GitHub 数据分支整体恢复
+async function ghRestoreIfNeeded() {
+  if (!ghEnabled()) return;
+  const existing = (await fsp.readdir(DATA_DIR).catch(() => [])).filter((n) => !n.startsWith('.'));
+  if (existing.length > 0) return; // 本地已有数据，以本地为准
+
+  const tree = await ghApi(`/repos/${GH_REPO}/git/trees/${GH_BRANCH}?recursive=1`);
+  const blobs = tree.tree.filter((t) => t.type === 'blob' && t.path.startsWith('data/vaults/'));
+  if (!blobs.length) return;
+  console.log(`  ♻️  从 GitHub 恢复 ${blobs.length} 个数据文件…`);
+  const queue = [...blobs];
+  const workers = Array.from({ length: 4 }, async () => {
+    for (;;) {
+      const item = queue.shift();
+      if (!item) return;
+      const dest = path.join(__dirname, item.path);
+      await fsp.mkdir(path.dirname(dest), { recursive: true });
+      const blob = await ghApi(`/repos/${GH_REPO}/git/blobs/${item.sha}`);
+      await fsp.writeFile(dest, Buffer.from(blob.content, 'base64'));
+    }
+  });
+  await Promise.all(workers);
+  console.log('  ♻️  GitHub 数据恢复完成');
+}
+
+
 
 const server = http.createServer(async (req, res) => {
   let url;
@@ -387,17 +531,25 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-fsp.mkdir(path.join(DATA_DIR), { recursive: true }).then(() => {
+(async () => {
+  await fsp.mkdir(DATA_DIR, { recursive: true });
+  try {
+    await ghRestoreIfNeeded();
+  } catch (err) {
+    console.error('GitHub 数据恢复失败（将使用本地数据）:', err.message);
+  }
   server.listen(PORT, HOST, () => {
     console.log('');
     console.log('  ✅ KeyDrive空间 已启动');
+    if (ghEnabled()) console.log(`  ☁️  数据持久化: 已启用（GitHub ${GH_REPO}@${GH_BRANCH}）`);
+    else console.log('  ⚠️  数据持久化: 未配置（设置 GH_DATA_TOKEN / GH_DATA_REPO 后启用）');
     console.log(`  本机访问:   http://localhost:${PORT}`);
     console.log(`  局域网访问: http://<你的IP>:${PORT}  （把 IP 告诉同一网络里的朋友）`);
     console.log(`  数据目录:   ${DATA_DIR}`);
     console.log(`  单文件上限: ${formatBytes(MAX_FILE)}（可用环境变量 MAX_FILE_MB 调整）`);
     console.log('');
   });
-});
+})();
 
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
