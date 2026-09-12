@@ -431,7 +431,7 @@ function scheduleSync(muts, label) {
     for (const m of muts) {
       const p = repoRelPath(m.abs);
       if (m.data === null) {
-        entries.push({ path: p, sha: null });
+        entries.push({ path: p, mode: '100644', type: 'blob', sha: null }); // sha:null 表示删除
         continue;
       }
       let buf = m.data;
